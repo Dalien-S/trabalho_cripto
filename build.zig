@@ -1,6 +1,8 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    b.resolveInstallPrefix(b.pathFromRoot("."), .{});
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -10,13 +12,19 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
 
     exe.root_module.linkSystemLibrary("ssl", .{});
     exe.root_module.linkSystemLibrary("crypto", .{});
 
-    b.installArtifact(exe);
+    // b.installArtifact(exe);
+    const install = b.addInstallArtifact(exe, .{
+        .dest_dir = .{ .override = .prefix },
+    });
+
+    b.getInstallStep().dependOn(&install.step);
 
     // rule for running
     const run_exe = b.addRunArtifact(exe);
