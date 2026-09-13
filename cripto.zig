@@ -119,12 +119,65 @@ pub const Rsa = struct {
 
 pub const DGEnc = struct {
     pub fn encrypt(msg: []const u8, key: []const u8) []const u8 {
-        std.debug.print("msg: '{s}', key: '{s}'\n", .{ msg, key });
-        return msg;
+        const mask: [4]u8 = generateMask(key);
+        const mask_vec: @Vector(4, u8) = mask[0..].*;
+        const result: []u8 = std.heap.page_allocator.alloc(u8, msg.len) catch &.{};
+
+        var i: usize = 0;
+        while (i < msg.len - (msg.len % 4)) : (i += 4) {
+            const block: @Vector(4, u8) = msg[i..][0..4].*;
+            const xored = block ^ mask_vec;
+            const shift_amount = @reduce(.Xor, block) % 4;
+            const rotated = rotate(xored, @truncate(shift_amount));
+            result[i..][0..4].* = rotated;
+        }
+        while (i < msg.len) : (i += 1) {
+            result[i] = msg[i] ^ mask[i % 4];
+        }
+
+        return result;
     }
+
     pub fn decrypt(msg: []const u8, key: []const u8) []const u8 {
-        std.debug.print("msg: '{s}', key: '{s}'\n", .{ msg, key });
-        return msg;
+        const mask: [4]u8 = generateMask(key);
+        const mask_vec: @Vector(4, u8) = mask[0..].*;
+        const result: []u8 = std.heap.page_allocator.alloc(u8, msg.len) catch &.{};
+
+        var i: usize = 0;
+        while (i < msg.len - (msg.len % 4)) : (i += 4) {
+            const block: @Vector(4, u8) = msg[i..][0..4].*;
+            const shift_amount = 4 - (@reduce(.Xor, block) % 4);
+            const rotated = rotate(block, @truncate(shift_amount));
+            const xored = rotated ^ mask_vec;
+            result[i..][0..4].* = xored;
+        }
+        while (i < msg.len) : (i += 1) {
+            result[i] = msg[i] ^ mask[i % 4];
+        }
+
+        return result;
+    }
+
+    fn generateMask(key: []const u8) [4]u8 {
+        var xor: u8 = key[0];
+        for (key[1..]) |byte| {
+            xor ^= byte;
+        }
+
+        var result: [4]u8 = [_]u8{xor} ** 4;
+        for (&result, 0..) |*item, shift_ammount| {
+            item.* = std.math.rotr(u8, item.*, shift_ammount * 2);
+        }
+        return result;
+    }
+
+    inline fn rotate(vec: @Vector(4, u8), ammount: u2) @Vector(4, u8) {
+        return switch (ammount) {
+            0 => @shuffle(u8, vec, undefined, [_]u8{ 0, 1, 2, 3 }),
+            1 => @shuffle(u8, vec, undefined, [_]u8{ 1, 2, 3, 0 }),
+            2 => @shuffle(u8, vec, undefined, [_]u8{ 2, 3, 0, 1 }),
+            3 => @shuffle(u8, vec, undefined, [_]u8{ 3, 0, 1, 2 }),
+        };
     }
 };
 
