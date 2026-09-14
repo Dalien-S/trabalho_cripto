@@ -80,7 +80,10 @@ pub fn main(init: std.process.Init) !void {
         null,
         count,
     );
-    @memset(text, cripto.Block{ 0, 0, 0, 0, 0, 0, 0, 0 });
+    @memset(
+        text,
+        cripto.zero_block,
+    );
     const bytes = std.mem.sliceAsBytes(text);
     _ = try file.readPositionalAll(io, bytes, 0);
 
@@ -95,7 +98,7 @@ pub fn main(init: std.process.Init) !void {
             \\ E entre gente remota edificaram
             \\ Novo Reino, que tanto sublimaram
         ;
-        var words = [_]cripto.Block{cripto.Block{ 0, 0, 0, 0, 0, 0, 0, 0 }} ** 9;
+        var words = [_]cripto.Block{cripto.zero_block} ** 9;
         const key_bytes = std.mem.sliceAsBytes(words[0..]);
         @memcpy(key_bytes[0..key_text.len], key_text);
         break :blk words;

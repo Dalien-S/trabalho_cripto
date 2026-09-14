@@ -5,7 +5,8 @@ const c = @cImport({
     @cInclude("openssl/rsa.h");
 });
 
-pub const Block = @Vector(8, u32);
+pub const Block = @Vector(16, u32);
+pub const zero_block = Block{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 // [0, 1, 2, ..., 15]
 const iv: []const u8 = iv: {
@@ -127,10 +128,10 @@ pub const DGEnc = struct {
             const reduced = @reduce(.Add, xored);
             const red_xor_mask = reduced ^ reduced_mask;
             const shuffle1 = @shuffle(u32, xored, undefined, Block{
-                3, 2, 1, 0, 7, 6, 5, 4,
+                3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12,
             });
             const shuffle2 = @shuffle(u32, xored, undefined, Block{
-                1, 0, 3, 2, 5, 4, 7, 6,
+                1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14,
             });
             const res = if (red_xor_mask & 1 != 0) shuffle1 else shuffle2;
             result[i] = res;
@@ -149,10 +150,10 @@ pub const DGEnc = struct {
             const reduced = @reduce(.Add, block);
             const red_xor_mask = reduced ^ reduced_mask;
             const shuffle1 = @shuffle(u32, block, undefined, Block{
-                3, 2, 1, 0, 7, 6, 5, 4,
+                3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12,
             });
             const shuffle2 = @shuffle(u32, block, undefined, Block{
-                1, 0, 3, 2, 5, 4, 7, 6,
+                1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14,
             });
             const res = if (red_xor_mask & 1 != 0) shuffle1 else shuffle2;
             const xored = res ^ mask;
@@ -161,7 +162,7 @@ pub const DGEnc = struct {
     }
 
     inline fn generateMask(key: []const Block) Block {
-        var res: Block = Block{ 0, 0, 0, 0, 0, 0, 0, 0 };
+        var res: Block = zero_block;
         for (key) |item| {
             res ^= item;
         }
@@ -170,9 +171,32 @@ pub const DGEnc = struct {
 };
 
 // pub const VectorialDGEnc = struct {
-//     pub fn encrypt(msg: []const u8, key: []const u8) []const u8 {}
+//     const c = @cImport({
+//         @cInclude("vectorized_dgenc.h");
+//     });
+//     pub fn encrypt(
+//         msg: []const Block,
+//         key: []const Block,
+//         result: []Block,
+//     ) void {
+//         c.vdgencEncrypt(
+//             @ptrCast(msg.ptr),
+//             @ptrCast(key.ptr),
+//             @ptrCast(result.ptr),
+//         );
+//     }
 
-//     pub fn decrypt(msg: []const u8, key: []const u8) []const u8 {}
+//     pub fn decrypt(
+//         msg: []const Block,
+//         key: []const Block,
+//         result: []Block,
+//     ) void {
+//         c.vdgencDecrypt(
+//             @ptrCast(msg.ptr),
+//             @ptrCast(key.ptr),
+//             @ptrCast(result.ptr),
+//         );
+//     }
 // };
 
 // interface
