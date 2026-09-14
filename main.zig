@@ -13,10 +13,10 @@ fn getMmappedFile(io: std.Io, file: Io.File) !Io.File.MemoryMap {
 
 fn testEncryptions(msg: []const cripto.Block, key: []const cripto.Block) void {
     var dgenc = cripto.DGEnc{};
-    // var aes = cripto.Aes{};
+    var aes = cripto.Aes{};
     // var rsa = cripto.Rsa{};
     var inters = [_]struct { []const u8, cripto.Encryption }{
-        // .{ "aes", .init(&aes) },
+        .{ "aes", .init(&aes) },
         // .{ "rsa", .init(&rsa) },
         .{ "dgenc", .init(&dgenc) },
     };

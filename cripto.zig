@@ -17,46 +17,40 @@ const iv: []const u8 = iv: {
 };
 
 pub const Aes = struct {
-    pub fn encrypt(msg: []const u8, key: []const u8) []const u8 {
+    pub fn encrypt(message: []const Block, key: []const Block, output: []Block) void {
+        const msg = std.mem.sliceAsBytes(message);
+        const k = std.mem.sliceAsBytes(key)[0..32];
+        const out = std.mem.sliceAsBytes(output);
         // AES-256 requires a 32-byte key.
-        std.debug.assert(key.len == 32);
-
-        // CBC + PKCS#7 padding means the ciphertext is always
-        // at least one byte-block larger than the message.
-        const output_len = ((msg.len / 16) + 1) * 16;
-        const ciphertext = std.heap.page_allocator.alloc(u8, output_len) catch unreachable;
+        std.debug.assert(k.len == 32);
 
         const ctx = c.EVP_CIPHER_CTX_new() orelse unreachable;
+        _ = c.EVP_CIPHER_CTX_set_padding(ctx, 0);
         defer c.EVP_CIPHER_CTX_free(ctx);
 
         var written: c_int = 0;
         var final_written: c_int = 0;
 
-        _ = c.EVP_EncryptInit_ex(ctx, c.EVP_aes_256_cbc(), null, key.ptr, iv.ptr);
-        _ = c.EVP_EncryptUpdate(ctx, ciphertext.ptr, &written, msg.ptr, @intCast(msg.len));
-        _ = c.EVP_EncryptFinal_ex(ctx, ciphertext.ptr + @as(usize, @intCast(written)), &final_written);
-
-        return ciphertext[0..@intCast(written + final_written)];
+        _ = c.EVP_EncryptInit_ex(ctx, c.EVP_aes_256_cbc(), null, k.ptr, iv.ptr);
+        _ = c.EVP_EncryptUpdate(ctx, out.ptr, &written, msg.ptr, @intCast(msg.len));
+        _ = c.EVP_EncryptFinal_ex(ctx, out.ptr + @as(usize, @intCast(written)), &final_written);
     }
 
-    pub fn decrypt(msg: []const u8, key: []const u8) []const u8 {
-        std.debug.assert(key.len == 32);
-        std.debug.assert(msg.len % 16 == 0);
-
-        // Decrypted output can never be larger than the ciphertext.
-        const plaintext = std.heap.page_allocator.alloc(u8, msg.len) catch unreachable;
+    pub fn decrypt(message: []const Block, key: []const Block, output: []Block) void {
+        const msg = std.mem.sliceAsBytes(message);
+        const k = std.mem.sliceAsBytes(key)[0..32];
+        const out = std.mem.sliceAsBytes(output);
 
         const ctx = c.EVP_CIPHER_CTX_new() orelse unreachable;
+        _ = c.EVP_CIPHER_CTX_set_padding(ctx, 0);
         defer c.EVP_CIPHER_CTX_free(ctx);
 
         var written: c_int = 0;
         var final_written: c_int = 0;
 
-        _ = c.EVP_DecryptInit_ex(ctx, c.EVP_aes_256_cbc(), null, key.ptr, iv.ptr);
-        _ = c.EVP_DecryptUpdate(ctx, plaintext.ptr, &written, msg.ptr, @intCast(msg.len));
-        _ = c.EVP_DecryptFinal_ex(ctx, plaintext.ptr + @as(usize, @intCast(written)), &final_written);
-
-        return plaintext[0..@intCast(written + final_written)];
+        _ = c.EVP_DecryptInit_ex(ctx, c.EVP_aes_256_cbc(), null, k.ptr, iv.ptr);
+        _ = c.EVP_DecryptUpdate(ctx, out.ptr, &written, msg.ptr, @intCast(msg.len));
+        _ = c.EVP_DecryptFinal_ex(ctx, out.ptr + @as(usize, @intCast(written)), &final_written);
     }
 };
 
