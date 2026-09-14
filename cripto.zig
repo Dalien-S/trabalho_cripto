@@ -5,6 +5,8 @@ const c = @cImport({
     @cInclude("openssl/rsa.h");
 });
 
+pub const Block = @Vector(8, u32);
+
 // [0, 1, 2, ..., 15]
 const iv: []const u8 = iv: {
     var res: []const u8 = &.{};
@@ -118,75 +120,73 @@ pub const Rsa = struct {
 };
 
 pub const DGEnc = struct {
-    pub fn encrypt(msg: []const u8, key: []const u8) []const u8 {
-        const mask: [4]u8 = generateMask(key);
-        const mask_vec: @Vector(4, u8) = mask[0..].*;
-        const result: []u8 = std.heap.page_allocator.alloc(u8, msg.len) catch &.{};
+    pub fn encrypt(
+        text: []const Block,
+        key: []const Block,
+        result: []Block,
+    ) void {
+        const mask: Block = generateMask(key);
+        const reduced_mask = @reduce(.Add, mask);
 
-        var i: usize = 0;
-        while (i < msg.len - (msg.len % 4)) : (i += 4) {
-            const block: @Vector(4, u8) = msg[i..][0..4].*;
-            const xored = block ^ mask_vec;
-            const shift_amount = @reduce(.Xor, block) % 4;
-            const rotated = rotate(xored, @truncate(shift_amount));
-            result[i..][0..4].* = rotated;
+        for (text, 0..) |block, i| {
+            const xored = block ^ mask;
+            const reduced = @reduce(.Add, xored);
+            const red_xor_mask = reduced ^ reduced_mask;
+            const shuffle1 = @shuffle(u32, xored, undefined, Block{
+                3, 2, 1, 0, 7, 6, 5, 4,
+            });
+            const shuffle2 = @shuffle(u32, xored, undefined, Block{
+                1, 0, 3, 2, 5, 4, 7, 6,
+            });
+            const res = if (red_xor_mask & 1 != 0) shuffle1 else shuffle2;
+            result[i] = res;
         }
-        while (i < msg.len) : (i += 1) {
-            result[i] = msg[i] ^ mask[i % 4];
-        }
-
-        return result;
     }
 
-    pub fn decrypt(msg: []const u8, key: []const u8) []const u8 {
-        const mask: [4]u8 = generateMask(key);
-        const mask_vec: @Vector(4, u8) = mask[0..].*;
-        const result: []u8 = std.heap.page_allocator.alloc(u8, msg.len) catch &.{};
+    pub fn decrypt(
+        text: []const Block,
+        key: []const Block,
+        result: []Block,
+    ) void {
+        const mask: Block = generateMask(key);
+        const reduced_mask = @reduce(.Add, mask);
 
-        var i: usize = 0;
-        while (i < msg.len - (msg.len % 4)) : (i += 4) {
-            const block: @Vector(4, u8) = msg[i..][0..4].*;
-            const shift_amount = 4 - (@reduce(.Xor, block) % 4);
-            const rotated = rotate(block, @truncate(shift_amount));
-            const xored = rotated ^ mask_vec;
-            result[i..][0..4].* = xored;
+        for (text, 0..) |block, i| {
+            const reduced = @reduce(.Add, block);
+            const red_xor_mask = reduced ^ reduced_mask;
+            const shuffle1 = @shuffle(u32, block, undefined, Block{
+                3, 2, 1, 0, 7, 6, 5, 4,
+            });
+            const shuffle2 = @shuffle(u32, block, undefined, Block{
+                1, 0, 3, 2, 5, 4, 7, 6,
+            });
+            const res = if (red_xor_mask & 1 != 0) shuffle1 else shuffle2;
+            const xored = res ^ mask;
+            result[i] = xored;
         }
-        while (i < msg.len) : (i += 1) {
-            result[i] = msg[i] ^ mask[i % 4];
-        }
-
-        return result;
     }
 
-    fn generateMask(key: []const u8) [4]u8 {
-        var xor: u8 = key[0];
-        for (key[1..]) |byte| {
-            xor ^= byte;
+    inline fn generateMask(key: []const Block) Block {
+        var res: Block = Block{ 0, 0, 0, 0, 0, 0, 0, 0 };
+        for (key) |item| {
+            res ^= item;
         }
-
-        var result: [4]u8 = [_]u8{xor} ** 4;
-        for (&result, 0..) |*item, shift_ammount| {
-            item.* = std.math.rotr(u8, item.*, shift_ammount * 2);
-        }
-        return result;
-    }
-
-    inline fn rotate(vec: @Vector(4, u8), ammount: u2) @Vector(4, u8) {
-        return switch (ammount) {
-            0 => @shuffle(u8, vec, undefined, [_]u8{ 0, 1, 2, 3 }),
-            1 => @shuffle(u8, vec, undefined, [_]u8{ 1, 2, 3, 0 }),
-            2 => @shuffle(u8, vec, undefined, [_]u8{ 2, 3, 0, 1 }),
-            3 => @shuffle(u8, vec, undefined, [_]u8{ 3, 0, 1, 2 }),
-        };
+        return res;
     }
 };
+
+// pub const VectorialDGEnc = struct {
+//     pub fn encrypt(msg: []const u8, key: []const u8) []const u8 {}
+
+//     pub fn decrypt(msg: []const u8, key: []const u8) []const u8 {}
+// };
 
 // interface
 pub const Encryption = struct {
     ptr: *anyopaque,
     vtab: *const struct {
-        encrypt: *const fn ([]const u8, []const u8) []const u8,
-        decrypt: *const fn ([]const u8, []const u8) []const u8,
+        encrypt: *const fn ([]const Block, []const Block, []Block) void,
+        decrypt: *const fn ([]const Block, []const Block, []Block) void,
     },
 
     pub fn init(raw: anytype) Encryption {
@@ -197,11 +197,19 @@ pub const Encryption = struct {
         }
 
         const v = struct {
-            pub fn encrypt(msg: []const u8, key: []const u8) []const u8 {
-                return info.pointer.child.encrypt(msg, key);
+            pub fn encrypt(
+                msg: []const Block,
+                key: []const Block,
+                result: []Block,
+            ) void {
+                return info.pointer.child.encrypt(msg, key, result);
             }
-            pub fn decrypt(msg: []const u8, key: []const u8) []const u8 {
-                return info.pointer.child.decrypt(msg, key);
+            pub fn decrypt(
+                msg: []const Block,
+                key: []const Block,
+                result: []Block,
+            ) void {
+                return info.pointer.child.decrypt(msg, key, result);
             }
         };
 
@@ -214,10 +222,20 @@ pub const Encryption = struct {
         };
     }
 
-    pub fn encrypt(self: *Encryption, msg: []const u8, key: []const u8) []const u8 {
-        return self.vtab.encrypt(msg, key);
+    pub fn encrypt(
+        self: *Encryption,
+        msg: []const Block,
+        key: []const Block,
+        result: []Block,
+    ) void {
+        return self.vtab.encrypt(msg, key, result);
     }
-    pub fn decrypt(self: *Encryption, msg: []const u8, key: []const u8) []const u8 {
-        return self.vtab.decrypt(msg, key);
+    pub fn decrypt(
+        self: *Encryption,
+        msg: []const Block,
+        key: []const Block,
+        result: []Block,
+    ) void {
+        return self.vtab.decrypt(msg, key, result);
     }
 };
