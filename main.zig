@@ -15,10 +15,10 @@ fn testEncryptions(msg: []const cripto.Block, key: []const cripto.Block) void {
     var dgenc = cripto.DGEnc{};
     var vdgenc = cripto.VectorialDGEnc{};
     var aes = cripto.Aes{};
-    // var rsa = cripto.Rsa{};
+    var rsa = cripto.Rsa{};
     var inters = [_]struct { []const u8, cripto.Encryption }{
         .{ "aes", .init(&aes) },
-        // .{ "rsa", .init(&rsa) },
+        .{ "rsa", .init(&rsa) },
         .{ "dgenc", .init(&dgenc) },
         .{ "vdgenc", .init(&vdgenc) },
     };

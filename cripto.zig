@@ -59,46 +59,73 @@ pub const Aes = struct {
 pub const Rsa = struct {
     var rsa_key: ?*c.EVP_PKEY = null;
 
-    pub fn encrypt(msg: []const u8, _: []const u8) []const u8 {
-        if (rsa_key == null) generateRsaKey() catch return &.{};
+    pub fn encrypt(
+        msg: []const Block,
+        _: []const Block,
+        result: []const Block,
+    ) void {
+        if (rsa_key == null) generateRsaKey() catch |err|
+            std.debug.panic("generating RSA key failed: {}!\n", .{err});
 
-        const ctx = c.EVP_PKEY_CTX_new(rsa_key.?, null) orelse return &.{};
+        const ctx = c.EVP_PKEY_CTX_new(rsa_key.?, null) orelse return;
         defer c.EVP_PKEY_CTX_free(ctx);
 
-        if (c.EVP_PKEY_encrypt_init(ctx) != 1) return &.{};
-        if (c.EVP_PKEY_CTX_set_rsa_padding(ctx, c.RSA_PKCS1_OAEP_PADDING) != 1) return &.{};
+        if (c.EVP_PKEY_encrypt_init(ctx) != 1) return;
+        if (c.EVP_PKEY_CTX_set_rsa_padding(ctx, c.RSA_PKCS1_OAEP_PADDING) != 1)
+            return;
 
         var size: usize = 0;
-        if (c.EVP_PKEY_encrypt(ctx, null, &size, msg.ptr, msg.len) != 1) return &.{};
+        if (c.EVP_PKEY_encrypt(
+            ctx,
+            null,
+            &size,
+            @ptrCast(@alignCast(msg.ptr)),
+            msg.len,
+        ) != 1)
+            return;
 
-        const result = std.heap.page_allocator.alloc(u8, size) catch return &.{};
-        errdefer std.heap.page_allocator.free(result);
-
-        if (c.EVP_PKEY_encrypt(ctx, result.ptr, &size, msg.ptr, msg.len) != 1) return &.{};
-
-        return result[0..size];
+        if (c.EVP_PKEY_encrypt(
+            ctx,
+            @ptrCast(@alignCast(@constCast(result.ptr))),
+            &size,
+            @ptrCast(@alignCast(msg.ptr)),
+            msg.len,
+        ) != 1)
+            return;
     }
 
-    pub fn decrypt(msg: []const u8, _: []const u8) []const u8 {
-        const key = rsa_key orelse return &.{};
+    pub fn decrypt(
+        msg: []const Block,
+        _: []const Block,
+        result: []const Block,
+    ) void {
+        const key = rsa_key orelse return;
 
-        const ctx = c.EVP_PKEY_CTX_new(key, null) orelse return &.{};
+        const ctx = c.EVP_PKEY_CTX_new(key, null) orelse return;
         defer c.EVP_PKEY_CTX_free(ctx);
 
-        if (c.EVP_PKEY_decrypt_init(ctx) != 1) return &.{};
-        if (c.EVP_PKEY_CTX_set_rsa_padding(ctx, c.RSA_PKCS1_OAEP_PADDING) != 1) return &.{};
+        if (c.EVP_PKEY_decrypt_init(ctx) != 1) return;
+        if (c.EVP_PKEY_CTX_set_rsa_padding(ctx, c.RSA_PKCS1_OAEP_PADDING) != 1)
+            return;
 
         var size: usize = 0;
-        if (c.EVP_PKEY_decrypt(ctx, null, &size, msg.ptr, msg.len) != 1)
-            return &.{};
+        if (c.EVP_PKEY_decrypt(
+            ctx,
+            null,
+            &size,
+            @ptrCast(@alignCast(msg.ptr)),
+            msg.len,
+        ) != 1)
+            return;
 
-        const result = std.heap.page_allocator.alloc(u8, size) catch return &.{};
-        errdefer std.heap.page_allocator.free(result);
-
-        if (c.EVP_PKEY_decrypt(ctx, result.ptr, &size, msg.ptr, msg.len) != 1)
-            return &.{};
-
-        return result[0..size];
+        if (c.EVP_PKEY_decrypt(
+            ctx,
+            @ptrCast(@alignCast(@constCast(result.ptr))),
+            &size,
+            @ptrCast(@alignCast(msg.ptr)),
+            msg.len,
+        ) != 1)
+            return;
     }
 
     pub fn generateRsaKey() !void {
