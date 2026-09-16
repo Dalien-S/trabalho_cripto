@@ -3,6 +3,7 @@ const c = @cImport({
     @cInclude("openssl/aes.h");
     @cInclude("openssl/evp.h");
     @cInclude("openssl/rsa.h");
+    @cInclude("vectorized_dgenc.h");
 });
 
 pub const Block = @Vector(16, u32);
@@ -115,6 +116,21 @@ pub const Rsa = struct {
 };
 
 pub const DGEnc = struct {
+    const shuffles: [4]Block = .{
+        Block{
+            15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+        },
+        Block{
+            7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8,
+        },
+        Block{
+            3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12,
+        },
+        Block{
+            1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14,
+        },
+    };
+
     pub fn encrypt(
         text: []const Block,
         key: []const Block,
@@ -127,13 +143,13 @@ pub const DGEnc = struct {
             const xored = block ^ mask;
             const reduced = @reduce(.Add, xored);
             const red_xor_mask = reduced ^ reduced_mask;
-            const shuffle1 = @shuffle(u32, xored, undefined, Block{
-                3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12,
-            });
-            const shuffle2 = @shuffle(u32, xored, undefined, Block{
-                1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14,
-            });
-            const res = if (red_xor_mask & 1 != 0) shuffle1 else shuffle2;
+            const res = switch (red_xor_mask & 3) {
+                0 => @shuffle(u32, xored, undefined, shuffles[0]),
+                1 => @shuffle(u32, xored, undefined, shuffles[1]),
+                2 => @shuffle(u32, xored, undefined, shuffles[2]),
+                3 => @shuffle(u32, xored, undefined, shuffles[3]),
+                else => unreachable,
+            };
             result[i] = res;
         }
     }
@@ -149,13 +165,13 @@ pub const DGEnc = struct {
         for (text, 0..) |block, i| {
             const reduced = @reduce(.Add, block);
             const red_xor_mask = reduced ^ reduced_mask;
-            const shuffle1 = @shuffle(u32, block, undefined, Block{
-                3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12,
-            });
-            const shuffle2 = @shuffle(u32, block, undefined, Block{
-                1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14,
-            });
-            const res = if (red_xor_mask & 1 != 0) shuffle1 else shuffle2;
+            const res = switch (red_xor_mask & 3) {
+                0 => @shuffle(u32, block, undefined, shuffles[0]),
+                1 => @shuffle(u32, block, undefined, shuffles[1]),
+                2 => @shuffle(u32, block, undefined, shuffles[2]),
+                3 => @shuffle(u32, block, undefined, shuffles[3]),
+                else => unreachable,
+            };
             const xored = res ^ mask;
             result[i] = xored;
         }
@@ -170,34 +186,35 @@ pub const DGEnc = struct {
     }
 };
 
-// pub const VectorialDGEnc = struct {
-//     const c = @cImport({
-//         @cInclude("vectorized_dgenc.h");
-//     });
-//     pub fn encrypt(
-//         msg: []const Block,
-//         key: []const Block,
-//         result: []Block,
-//     ) void {
-//         c.vdgencEncrypt(
-//             @ptrCast(msg.ptr),
-//             @ptrCast(key.ptr),
-//             @ptrCast(result.ptr),
-//         );
-//     }
+pub const VectorialDGEnc = struct {
+    pub fn encrypt(
+        msg: []const Block,
+        key: []const Block,
+        result: []Block,
+    ) void {
+        c.vdgencEncrypt(
+            @ptrCast(msg.ptr),
+            @ptrCast(key.ptr),
+            @ptrCast(result.ptr),
+            msg.len,
+            key.len,
+        );
+    }
 
-//     pub fn decrypt(
-//         msg: []const Block,
-//         key: []const Block,
-//         result: []Block,
-//     ) void {
-//         c.vdgencDecrypt(
-//             @ptrCast(msg.ptr),
-//             @ptrCast(key.ptr),
-//             @ptrCast(result.ptr),
-//         );
-//     }
-// };
+    pub fn decrypt(
+        msg: []const Block,
+        key: []const Block,
+        result: []Block,
+    ) void {
+        c.vdgencDecrypt(
+            @ptrCast(msg.ptr),
+            @ptrCast(key.ptr),
+            @ptrCast(result.ptr),
+            msg.len,
+            key.len,
+        );
+    }
+};
 
 // interface
 pub const Encryption = struct {

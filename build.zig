@@ -16,14 +16,15 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    // exe.addCSourceFile(.{
-    //     .file = b.path("vectorized_dgenc.c"),
-    //     .flags = &.{
-    //         "-mavx512f",
-    //         "-mavx512bw",
-    //         "-mavx512dq",
-    //     },
-    // });
+    exe.root_module.addIncludePath(b.path("."));
+    exe.root_module.addCSourceFile(.{
+        .file = b.path("vectorized_dgenc.c"),
+        .flags = &.{
+            "-mavx512f",
+            "-mavx512bw",
+            "-march=native",
+        },
+    });
 
     exe.root_module.linkSystemLibrary("ssl", .{});
     exe.root_module.linkSystemLibrary("crypto", .{});

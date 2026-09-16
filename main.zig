@@ -13,12 +13,14 @@ fn getMmappedFile(io: std.Io, file: Io.File) !Io.File.MemoryMap {
 
 fn testEncryptions(msg: []const cripto.Block, key: []const cripto.Block) void {
     var dgenc = cripto.DGEnc{};
+    var vdgenc = cripto.VectorialDGEnc{};
     var aes = cripto.Aes{};
     // var rsa = cripto.Rsa{};
     var inters = [_]struct { []const u8, cripto.Encryption }{
         .{ "aes", .init(&aes) },
         // .{ "rsa", .init(&rsa) },
         .{ "dgenc", .init(&dgenc) },
+        .{ "vdgenc", .init(&vdgenc) },
     };
     const result: []cripto.Block = std.heap.page_allocator.alloc(
         cripto.Block,
@@ -35,14 +37,8 @@ fn testEncryptions(msg: []const cripto.Block, key: []const cripto.Block) void {
         inter[1].decrypt(result, key, dec_result);
         if (!std.mem.eql(cripto.Block, msg, dec_result)) {
             std.debug.print("{s} failed\n", .{inter[0]});
-            std.debug.print("original message => {s}\n", .{
-                std.mem.sliceAsBytes(msg),
-            });
             std.debug.print("original message(bytes) => {x}\n", .{
                 std.mem.sliceAsBytes(msg),
-            });
-            std.debug.print("key => {s}\n", .{
-                std.mem.sliceAsBytes(key),
             });
             std.debug.print("key(bytes) => {x}\n", .{
                 std.mem.sliceAsBytes(key),
@@ -80,10 +76,13 @@ pub fn main(init: std.process.Init) !void {
         null,
         count,
     );
+    defer std.heap.page_allocator.free(text);
+
     @memset(
         text,
         cripto.zero_block,
     );
+
     const bytes = std.mem.sliceAsBytes(text);
     _ = try file.readPositionalAll(io, bytes, 0);
 
