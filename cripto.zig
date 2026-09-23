@@ -19,6 +19,10 @@ const iv: []const u8 = iv: {
 };
 
 pub const Aes = struct {
+    pub fn name() []const u8 {
+        return "aes";
+    }
+
     pub fn encrypt(message: []const Block, key: []const Block, output: []Block) void {
         const msg = std.mem.sliceAsBytes(message);
         const k = std.mem.sliceAsBytes(key)[0..32];
@@ -57,6 +61,10 @@ pub const Aes = struct {
 };
 
 pub const Rsa = struct {
+    pub fn name() []const u8 {
+        return "rsa";
+    }
+
     var rsa_key: ?*c.EVP_PKEY = null;
 
     pub fn encrypt(
@@ -143,6 +151,10 @@ pub const Rsa = struct {
 };
 
 pub const DGEnc = struct {
+    pub fn name() []const u8 {
+        return "dgenc";
+    }
+
     const shuffles: [4]Block = .{
         Block{
             15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
@@ -214,6 +226,10 @@ pub const DGEnc = struct {
 };
 
 pub const VectorialDGEnc = struct {
+    pub fn name() []const u8 {
+        return "vecdgenc";
+    }
+
     pub fn encrypt(
         msg: []const Block,
         key: []const Block,
@@ -247,6 +263,7 @@ pub const VectorialDGEnc = struct {
 pub const Encryption = struct {
     ptr: *anyopaque,
     vtab: *const struct {
+        name: *const fn () []const u8,
         encrypt: *const fn ([]const Block, []const Block, []Block) void,
         decrypt: *const fn ([]const Block, []const Block, []Block) void,
     },
@@ -259,6 +276,9 @@ pub const Encryption = struct {
         }
 
         const v = struct {
+            pub fn name() []const u8 {
+                return info.pointer.child.name();
+            }
             pub fn encrypt(
                 msg: []const Block,
                 key: []const Block,
@@ -278,10 +298,15 @@ pub const Encryption = struct {
         return .{
             .ptr = @ptrCast(@alignCast(raw)),
             .vtab = &.{
+                .name = v.name,
                 .encrypt = v.encrypt,
                 .decrypt = v.decrypt,
             },
         };
+    }
+
+    pub fn name(self: *const Encryption) []const u8 {
+        return self.vtab.name();
     }
 
     pub fn encrypt(

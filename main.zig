@@ -1,71 +1,25 @@
 const std = @import("std");
 const Io = std.Io;
 const File = Io.File;
+const Timestamp = Io.Timestamp;
+const Duration = Io.Duration;
+const Clock = Io.Clock;
+const ArrayList = std.ArrayList;
 
 const cripto = @import("cripto.zig");
 
 const txt = "This message is going to be encrypted" ++ [_]u8{0};
 const message = txt ++ [_]u8{'-'} ** (16 - (@rem(txt.len, 16)));
 
-fn getMmappedFile(io: std.Io, file: Io.File) !Io.File.MemoryMap {
-    return try file.createMemoryMap(io, .{ .len = try file.length(io), .offset = 0 });
-}
+const ResultTimes = struct {
+    encryption_used: []const u8,
+    decryption_times: ArrayList(struct {
+        filesize: usize,
+        decryption_time: i96,
+    }), // nanoseconds
+};
 
-fn testEncryptions(msg: []const cripto.Block, key: []const cripto.Block) void {
-    var dgenc = cripto.DGEnc{};
-    var vdgenc = cripto.VectorialDGEnc{};
-    var aes = cripto.Aes{};
-    var rsa = cripto.Rsa{};
-    var inters = [_]struct { []const u8, cripto.Encryption }{
-        .{ "aes", .init(&aes) },
-        .{ "rsa", .init(&rsa) },
-        .{ "dgenc", .init(&dgenc) },
-        .{ "vdgenc", .init(&vdgenc) },
-    };
-    const result: []cripto.Block = std.heap.page_allocator.alloc(
-        cripto.Block,
-        msg.len,
-    ) catch &.{};
-    const dec_result: []cripto.Block = std.heap.page_allocator.alloc(
-        cripto.Block,
-        msg.len,
-    ) catch &.{};
-
-    for (&inters) |*inter| {
-        std.debug.print("trying {s}:\n", .{inter[0]});
-        inter[1].encrypt(msg, key, result);
-        inter[1].decrypt(result, key, dec_result);
-        if (!std.mem.eql(cripto.Block, msg, dec_result)) {
-            std.debug.print("{s} failed\n", .{inter[0]});
-            std.debug.print("original message(bytes) => {x}\n", .{
-                std.mem.sliceAsBytes(msg),
-            });
-            std.debug.print("key(bytes) => {x}\n", .{
-                std.mem.sliceAsBytes(key),
-            });
-            std.debug.print(
-                "result from encryption(bytes) => {x}\n",
-                .{std.mem.sliceAsBytes(result)},
-            );
-            std.debug.print(
-                "result from decryption(bytes) => {x}\n\n",
-                .{std.mem.sliceAsBytes(dec_result)},
-            );
-        } else {
-            std.debug.print("Worked!\n", .{});
-        }
-    }
-}
-
-pub fn main(init: std.process.Init) !void {
-    const io = init.io;
-    const args = init.minimal.args;
-
-    const filename = std.mem.span(args.vector[1]);
-    std.debug.print("filename: {s}\n", .{filename});
-
-    var file = try Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_write });
-    defer file.close(io);
+fn getPaddedText(io: std.Io, file: Io.File) ![]cripto.Block {
     const size = try file.length(io);
     var count = size / @sizeOf(cripto.Block);
     if (size % @sizeOf(cripto.Block) != 0) {
@@ -76,7 +30,6 @@ pub fn main(init: std.process.Init) !void {
         null,
         count,
     );
-    defer std.heap.page_allocator.free(text);
 
     @memset(
         text,
@@ -85,6 +38,101 @@ pub fn main(init: std.process.Init) !void {
 
     const bytes = std.mem.sliceAsBytes(text);
     _ = try file.readPositionalAll(io, bytes, 0);
+
+    return text;
+}
+
+fn testEncryptionsTime(
+    io: std.Io,
+    encryptions: []cripto.Encryption,
+    key: []const cripto.Block,
+    filenames: []const []const u8,
+    number_of_runs: usize,
+    clock_type: Clock,
+) ![]ResultTimes {
+    var results = try std.heap.page_allocator.alloc(ResultTimes, encryptions.len);
+    for (results, encryptions) |*result, encryption| {
+        result.* = .{
+            .encryption_used = encryption.name(),
+            .decryption_times = .empty,
+        };
+    }
+
+    for (filenames) |filename| {
+        var file = try Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_write });
+        defer file.close(io);
+
+        const text: []cripto.Block = try getPaddedText(io, file);
+        const encrypted: []cripto.Block = try std.heap.page_allocator.alloc(cripto.Block, text.len);
+        const decrypted: []cripto.Block = try std.heap.page_allocator.alloc(cripto.Block, text.len);
+        defer std.heap.page_allocator.free(text);
+        defer std.heap.page_allocator.free(encrypted);
+        defer std.heap.page_allocator.free(decrypted);
+
+        for (encryptions, 0..) |*encryption, i| {
+            std.log.debug("running {s}\n", .{encryption.name()});
+            encryption.encrypt(text, key, encrypted);
+            const average: i96 = avg: {
+                var total: i96 = 0;
+                var highest_duration: i96 = 0;
+                var lowest_duration: i96 = std.math.maxInt(i96);
+
+                for (0..number_of_runs + 2) |_| {
+                    const start = Timestamp.now(io, clock_type);
+                    encryption.decrypt(encrypted, key, decrypted);
+                    const end = Timestamp.now(io, clock_type);
+                    const duration = Timestamp.durationTo(start, end).toNanoseconds();
+                    if (duration > highest_duration) {
+                        highest_duration = duration;
+                    }
+                    if (duration < lowest_duration) {
+                        lowest_duration = duration;
+                    }
+                    total += duration;
+
+                    if (!std.mem.eql(cripto.Block, text, decrypted)) {
+                        std.debug.print("{s} decryption failed!\n", .{encryption.name()});
+                        return error.DecryptionFailed;
+                    }
+                }
+
+                const normalized_time = total - highest_duration - lowest_duration;
+                break :avg @divTrunc(normalized_time, @as(i96, @intCast(number_of_runs)));
+            };
+
+            try results[i].decryption_times.append(std.heap.page_allocator, .{
+                .filesize = try file.length(io),
+                .decryption_time = average,
+            });
+        }
+    }
+
+    return results;
+}
+
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.arena.allocator();
+
+    var used_encryptions = ArrayList(cripto.Encryption).empty;
+    defer used_encryptions.clearAndFree(allocator);
+
+    var args_iter = init.minimal.args.iterate();
+    _ = args_iter.next();
+    while (args_iter.next()) |arg| {
+        if (std.mem.eql(u8, arg, "dgenc")) {
+            try used_encryptions.append(allocator, .init(@constCast(&cripto.DGEnc{})));
+        } else if (std.mem.eql(u8, arg, "vecdgenc")) {
+            try used_encryptions.append(allocator, .init(@constCast(&cripto.VectorialDGEnc{})));
+        } else if (std.mem.eql(u8, arg, "aes")) {
+            try used_encryptions.append(allocator, .init(@constCast(&cripto.Aes{})));
+        } else if (std.mem.eql(u8, arg, "rsa")) {
+            try used_encryptions.append(allocator, .init(@constCast(&cripto.Aes{})));
+        } else {
+            std.debug.print("Unknown argument {s}, please use one of the following: \n", .{arg});
+            std.debug.print("dgenc, vecdgenc, aes, rsa\n", .{});
+        }
+    }
 
     const key: [9]cripto.Block = comptime blk: {
         const key_text =
@@ -103,6 +151,25 @@ pub fn main(init: std.process.Init) !void {
         break :blk words;
     };
 
-    testEncryptions(text, @ptrCast(@alignCast(&key)));
-    // testEncryptions(message, &key);
+    const results = try testEncryptionsTime(
+        io,
+        used_encryptions.items,
+        @ptrCast(@alignCast(&key)),
+        &.{
+            "build.zig",
+            "main.zig",
+            "vectorized_dgenc.o",
+            "files/pride_and_prejudice.txt",
+        },
+        100,
+        .cpu_process,
+    );
+    defer std.heap.page_allocator.free(results);
+
+    for (results) |result| {
+        std.debug.print("result: {s}\n", .{result.encryption_used});
+        for (result.decryption_times.items, 0..) |time, i| {
+            std.debug.print("{d}: {any}\n", .{ i, time });
+        }
+    }
 }
