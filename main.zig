@@ -127,7 +127,7 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "aes")) {
             try used_encryptions.append(allocator, .init(@constCast(&cripto.Aes{})));
         } else if (std.mem.eql(u8, arg, "rsa")) {
-            try used_encryptions.append(allocator, .init(@constCast(&cripto.Aes{})));
+            try used_encryptions.append(allocator, .init(@constCast(&cripto.Rsa{})));
         } else {
             std.debug.print("Unknown argument {s}, please use one of the following: \n", .{arg});
             std.debug.print("dgenc, vecdgenc, aes, rsa\n", .{});
@@ -159,7 +159,7 @@ pub fn main(init: std.process.Init) !void {
             "build.zig",
             "main.zig",
             "vectorized_dgenc.o",
-            "files/pride_and_prejudice.txt",
+            "os-lusiadas.txt",
         },
         100,
         .cpu_process,
