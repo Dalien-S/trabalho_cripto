@@ -3,10 +3,12 @@ const c = @cImport({
     @cInclude("openssl/aes.h");
     @cInclude("openssl/evp.h");
     @cInclude("openssl/rsa.h");
+    @cInclude("openssl/err.h");
     @cInclude("vectorized_dgenc.h");
 });
 
 pub const Block = @Vector(16, u32);
+pub const RsaOutputBlock = @Vector(64, u32);
 pub const zero_block = Block{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 // [0, 1, 2, ..., 15]
@@ -19,10 +21,6 @@ const iv: []const u8 = iv: {
 };
 
 pub const Aes = struct {
-    pub fn name() []const u8 {
-        return "aes";
-    }
-
     pub fn encrypt(message: []const Block, key: []const Block, output: []Block) void {
         const msg = std.mem.sliceAsBytes(message);
         const k = std.mem.sliceAsBytes(key)[0..32];
@@ -61,16 +59,11 @@ pub const Aes = struct {
 };
 
 pub const Rsa = struct {
-    pub fn name() []const u8 {
-        return "rsa";
-    }
-
     var rsa_key: ?*c.EVP_PKEY = null;
 
     pub fn encrypt(
         msg: []const Block,
-        _: []const Block,
-        result: []const Block,
+        result: []RsaOutputBlock,
     ) void {
         if (rsa_key == null) generateRsaKey() catch |err|
             std.debug.panic("generating RSA key failed: {}!\n", .{err});
@@ -80,32 +73,56 @@ pub const Rsa = struct {
 
         if (c.EVP_PKEY_encrypt_init(ctx) != 1) return;
         if (c.EVP_PKEY_CTX_set_rsa_padding(ctx, c.RSA_PKCS1_OAEP_PADDING) != 1)
-            return;
+            std.debug.panic("padding\n", .{});
 
         var size: usize = 0;
-        if (c.EVP_PKEY_encrypt(
-            ctx,
-            null,
-            &size,
-            @ptrCast(@alignCast(msg.ptr)),
-            msg.len,
-        ) != 1)
-            return;
+        for (msg, 0..) |*block, i| {
+            const r1 = c.EVP_PKEY_encrypt(
+                ctx,
+                null,
+                &size,
+                @ptrCast(@alignCast(block)),
+                @sizeOf(Block),
+            );
+            if (r1 != 1) {
+                const err = c.ERR_get_error();
+                std.debug.print("first encrypt: {}: {s}\n", .{
+                    r1,
+                    std.mem.span(c.ERR_error_string(err, null)),
+                });
+            }
 
-        if (c.EVP_PKEY_encrypt(
-            ctx,
-            @ptrCast(@alignCast(@constCast(result.ptr))),
-            &size,
-            @ptrCast(@alignCast(msg.ptr)),
-            msg.len,
-        ) != 1)
-            return;
+            const r2 = c.EVP_PKEY_encrypt(
+                ctx,
+                @ptrCast(@alignCast(&result[i])),
+                &size,
+                @ptrCast(@alignCast(block)),
+                @sizeOf(Block),
+            );
+            if (r2 != 1) {
+                const err = c.ERR_get_error();
+                std.debug.print("second encrypt: {}: {s}\n", .{
+                    r2,
+                    std.mem.span(c.ERR_error_string(err, null)),
+                });
+            }
+        }
+    }
+
+    comptime {
+        if (@sizeOf(RsaOutputBlock) != 256 or @sizeOf(Block) != 64) {
+            @compileError(
+                std.fmt.comptimePrint("@sizeOf(Block) == {}\n@sizeOf(RsaOutputBlock) == {}\n", .{
+                    @sizeOf(Block),
+                    @sizeOf(RsaOutputBlock),
+                }),
+            );
+        }
     }
 
     pub fn decrypt(
-        msg: []const Block,
-        _: []const Block,
-        result: []const Block,
+        msg: []const RsaOutputBlock,
+        result: []Block,
     ) void {
         const key = rsa_key orelse return;
 
@@ -114,26 +131,40 @@ pub const Rsa = struct {
 
         if (c.EVP_PKEY_decrypt_init(ctx) != 1) return;
         if (c.EVP_PKEY_CTX_set_rsa_padding(ctx, c.RSA_PKCS1_OAEP_PADDING) != 1)
-            return;
+            std.debug.panic("padding\n", .{});
 
         var size: usize = 0;
-        if (c.EVP_PKEY_decrypt(
-            ctx,
-            null,
-            &size,
-            @ptrCast(@alignCast(msg.ptr)),
-            msg.len,
-        ) != 1)
-            return;
+        for (msg, 0..) |*block, i| {
+            const r1 = c.EVP_PKEY_decrypt(
+                ctx,
+                null,
+                &size,
+                @ptrCast(@alignCast(block)),
+                @sizeOf(RsaOutputBlock),
+            );
+            if (r1 != 1) {
+                const err = c.ERR_get_error();
+                std.debug.print("first decrypt: {}: {s}\n", .{
+                    r1,
+                    std.mem.span(c.ERR_error_string(err, null)),
+                });
+            }
 
-        if (c.EVP_PKEY_decrypt(
-            ctx,
-            @ptrCast(@alignCast(@constCast(result.ptr))),
-            &size,
-            @ptrCast(@alignCast(msg.ptr)),
-            msg.len,
-        ) != 1)
-            return;
+            const r2 = c.EVP_PKEY_decrypt(
+                ctx,
+                @ptrCast(@alignCast(&result[i])),
+                &size,
+                @ptrCast(@alignCast(block)),
+                @sizeOf(RsaOutputBlock),
+            );
+            if (r2 != 1) {
+                const err = c.ERR_get_error();
+                std.debug.print("second decrypt: {}: {s}\n", .{
+                    r2,
+                    std.mem.span(c.ERR_error_string(err, null)),
+                });
+            }
+        }
     }
 
     pub fn generateRsaKey() !void {
@@ -151,10 +182,6 @@ pub const Rsa = struct {
 };
 
 pub const DGEnc = struct {
-    pub fn name() []const u8 {
-        return "dgenc";
-    }
-
     const shuffles: [4]Block = .{
         Block{
             15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
@@ -226,10 +253,6 @@ pub const DGEnc = struct {
 };
 
 pub const VectorialDGEnc = struct {
-    pub fn name() []const u8 {
-        return "vecdgenc";
-    }
-
     pub fn encrypt(
         msg: []const Block,
         key: []const Block,
@@ -256,73 +279,5 @@ pub const VectorialDGEnc = struct {
             msg.len,
             key.len,
         );
-    }
-};
-
-// interface
-pub const Encryption = struct {
-    ptr: *anyopaque,
-    vtab: *const struct {
-        name: *const fn () []const u8,
-        encrypt: *const fn ([]const Block, []const Block, []Block) void,
-        decrypt: *const fn ([]const Block, []const Block, []Block) void,
-    },
-
-    pub fn init(raw: anytype) Encryption {
-        const T = @TypeOf(raw);
-        const info = @typeInfo(T);
-        if (info != .pointer or info.pointer.is_const) {
-            @compileError(std.fmt.comptimePrint("Interface Encryption expects a pointer to non-const, got: {any}\n", .{T}));
-        }
-
-        const v = struct {
-            pub fn name() []const u8 {
-                return info.pointer.child.name();
-            }
-            pub fn encrypt(
-                msg: []const Block,
-                key: []const Block,
-                result: []Block,
-            ) void {
-                return info.pointer.child.encrypt(msg, key, result);
-            }
-            pub fn decrypt(
-                msg: []const Block,
-                key: []const Block,
-                result: []Block,
-            ) void {
-                return info.pointer.child.decrypt(msg, key, result);
-            }
-        };
-
-        return .{
-            .ptr = @ptrCast(@alignCast(raw)),
-            .vtab = &.{
-                .name = v.name,
-                .encrypt = v.encrypt,
-                .decrypt = v.decrypt,
-            },
-        };
-    }
-
-    pub fn name(self: *const Encryption) []const u8 {
-        return self.vtab.name();
-    }
-
-    pub fn encrypt(
-        self: *Encryption,
-        msg: []const Block,
-        key: []const Block,
-        result: []Block,
-    ) void {
-        return self.vtab.encrypt(msg, key, result);
-    }
-    pub fn decrypt(
-        self: *Encryption,
-        msg: []const Block,
-        key: []const Block,
-        result: []Block,
-    ) void {
-        return self.vtab.decrypt(msg, key, result);
     }
 };

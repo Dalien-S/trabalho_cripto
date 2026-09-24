@@ -42,95 +42,121 @@ fn getPaddedText(io: std.Io, file: Io.File) ![]cripto.Block {
     return text;
 }
 
-fn testEncryptionsTime(
+fn testNormal(
     io: std.Io,
-    encryptions: []cripto.Encryption,
+    msg: []const cripto.Block,
     key: []const cripto.Block,
-    filenames: []const []const u8,
-    number_of_runs: usize,
-    clock_type: Clock,
-) ![]ResultTimes {
-    var results = try std.heap.page_allocator.alloc(ResultTimes, encryptions.len);
-    for (results, encryptions) |*result, encryption| {
-        result.* = .{
-            .encryption_used = encryption.name(),
-            .decryption_times = .empty,
-        };
-    }
+    comptime module: type,
+    comptime name: []const u8,
+) !void {
+    const encrypted = try std.heap.page_allocator.alloc(cripto.Block, msg.len);
+    const decrypted = try std.heap.page_allocator.alloc(cripto.Block, msg.len);
+    defer std.heap.page_allocator.free(encrypted);
+    defer std.heap.page_allocator.free(decrypted);
 
+    const e_start = Timestamp.now(io, .cpu_process);
+    module.encrypt(msg, key, encrypted);
+    const e_end = Timestamp.now(io, .cpu_process);
+    const e_duration = Timestamp.durationTo(e_start, e_end).toNanoseconds();
+    std.debug.print("{s} encryption: {}\n", .{ name, e_duration });
+
+    const d_start = Timestamp.now(io, .cpu_process);
+    module.decrypt(encrypted, key, decrypted);
+    const d_end = Timestamp.now(io, .cpu_process);
+    const d_duration = Timestamp.durationTo(d_start, d_end).toNanoseconds();
+    std.debug.print("{s} decryption: {}\n", .{ name, d_duration });
+
+    if (!std.mem.eql(cripto.Block, decrypted, msg)) {
+        std.debug.print("{s} FAIL!\n", .{name});
+    }
+}
+
+fn testRsa(io: std.Io, msg: []const cripto.Block) !void {
+    const encrypted = try std.heap.page_allocator.alloc(cripto.RsaOutputBlock, msg.len);
+    const decrypted = try std.heap.page_allocator.alloc(cripto.Block, msg.len);
+    defer std.heap.page_allocator.free(encrypted);
+    defer std.heap.page_allocator.free(decrypted);
+
+    const e_start = Timestamp.now(io, .cpu_process);
+    cripto.Rsa.encrypt(msg, encrypted);
+    const e_end = Timestamp.now(io, .cpu_process);
+    const e_duration = Timestamp.durationTo(e_start, e_end).toNanoseconds();
+    std.debug.print("rsa encryption: {}\n", .{e_duration});
+
+    const d_start = Timestamp.now(io, .cpu_process);
+    cripto.Rsa.decrypt(encrypted, decrypted);
+    const d_end = Timestamp.now(io, .cpu_process);
+    const d_duration = Timestamp.durationTo(d_start, d_end).toNanoseconds();
+    std.debug.print("rsa decryption: {}\n", .{d_duration});
+
+    if (!std.mem.eql(cripto.Block, decrypted, msg)) {
+        std.debug.print("rsa FAIL!\n", .{});
+    }
+}
+
+fn testEncryptionsTime(io: std.Io, key: []const cripto.Block, filenames: []const []const u8, options: struct {
+    runAes: bool,
+    runRsa: bool,
+    runDgenc: bool,
+    runVdgenc: bool,
+    proper: bool,
+}) !void {
+    const numberOfRuns: usize = if (options.proper) 30 else 1;
     for (filenames) |filename| {
         var file = try Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_write });
         defer file.close(io);
 
-        const text: []cripto.Block = try getPaddedText(io, file);
-        const encrypted: []cripto.Block = try std.heap.page_allocator.alloc(cripto.Block, text.len);
-        const decrypted: []cripto.Block = try std.heap.page_allocator.alloc(cripto.Block, text.len);
-        defer std.heap.page_allocator.free(text);
-        defer std.heap.page_allocator.free(encrypted);
-        defer std.heap.page_allocator.free(decrypted);
+        const msg: []cripto.Block = try getPaddedText(io, file);
+        defer std.heap.page_allocator.free(msg);
 
-        for (encryptions, 0..) |*encryption, i| {
-            std.log.debug("running {s}\n", .{encryption.name()});
-            encryption.encrypt(text, key, encrypted);
-            const average: i96 = avg: {
-                var total: i96 = 0;
-                var highest_duration: i96 = 0;
-                var lowest_duration: i96 = std.math.maxInt(i96);
-
-                for (0..number_of_runs + 2) |_| {
-                    const start = Timestamp.now(io, clock_type);
-                    encryption.decrypt(encrypted, key, decrypted);
-                    const end = Timestamp.now(io, clock_type);
-                    const duration = Timestamp.durationTo(start, end).toNanoseconds();
-                    if (duration > highest_duration) {
-                        highest_duration = duration;
-                    }
-                    if (duration < lowest_duration) {
-                        lowest_duration = duration;
-                    }
-                    total += duration;
-
-                    if (!std.mem.eql(cripto.Block, text, decrypted)) {
-                        std.debug.print("{s} decryption failed!\n", .{encryption.name()});
-                        return error.DecryptionFailed;
-                    }
-                }
-
-                const normalized_time = total - highest_duration - lowest_duration;
-                break :avg @divTrunc(normalized_time, @as(i96, @intCast(number_of_runs)));
-            };
-
-            try results[i].decryption_times.append(std.heap.page_allocator, .{
-                .filesize = try file.length(io),
-                .decryption_time = average,
-            });
+        if (options.runAes) {
+            for (0..numberOfRuns) |_| {
+                try testNormal(io, msg, key, cripto.Aes, "aes");
+            }
+        }
+        if (options.runRsa) {
+            for (0..numberOfRuns) |_| {
+                try testRsa(io, msg);
+            }
+        }
+        if (options.runDgenc) {
+            for (0..numberOfRuns) |_| {
+                try testNormal(io, msg, key, cripto.DGEnc, "dgenc");
+            }
+        }
+        if (options.runVdgenc) {
+            for (0..numberOfRuns) |_| {
+                try testNormal(io, msg, key, cripto.VectorialDGEnc, "vdgenc");
+            }
         }
     }
-
-    return results;
 }
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
-    const allocator = init.arena.allocator();
 
-    var used_encryptions = ArrayList(cripto.Encryption).empty;
-    defer used_encryptions.clearAndFree(allocator);
+    var runAes: bool = false;
+    var runRsa: bool = false;
+    var runDgenc: bool = false;
+    var runVdgenc: bool = false;
+    var proper: bool = false;
 
     var args_iter = init.minimal.args.iterate();
     _ = args_iter.next();
     while (args_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "dgenc")) {
-            try used_encryptions.append(allocator, .init(@constCast(&cripto.DGEnc{})));
+            runDgenc = true;
         } else if (std.mem.eql(u8, arg, "vecdgenc")) {
-            try used_encryptions.append(allocator, .init(@constCast(&cripto.VectorialDGEnc{})));
+            runVdgenc = true;
         } else if (std.mem.eql(u8, arg, "aes")) {
-            try used_encryptions.append(allocator, .init(@constCast(&cripto.Aes{})));
+            runAes = true;
         } else if (std.mem.eql(u8, arg, "rsa")) {
-            try used_encryptions.append(allocator, .init(@constCast(&cripto.Rsa{})));
+            runRsa = true;
+        } else if (std.mem.eql(u8, arg, "--proper")) {
+            proper = true;
         } else {
             std.debug.print("Unknown argument {s}, please use one of the following: \n", .{arg});
-            std.debug.print("dgenc, vecdgenc, aes, rsa\n", .{});
+            std.debug.print("dgenc, vecdgenc, aes, rsa, --proper\n", .{});
         }
     }
 
@@ -151,9 +177,8 @@ pub fn main(init: std.process.Init) !void {
         break :blk words;
     };
 
-    const results = try testEncryptionsTime(
+    try testEncryptionsTime(
         io,
-        used_encryptions.items,
         @ptrCast(@alignCast(&key)),
         &.{
             "akatsuki.txt",
@@ -161,15 +186,12 @@ pub fn main(init: std.process.Init) !void {
             "os-lusiadas-cantos-i-v.txt",
             "les-miserables.txt",
         },
-        100,
-        .cpu_process,
+        .{
+            .runAes = runAes,
+            .runRsa = runRsa,
+            .runDgenc = runDgenc,
+            .runVdgenc = runVdgenc,
+            .proper = proper,
+        },
     );
-    defer std.heap.page_allocator.free(results);
-
-    for (results) |result| {
-        std.debug.print("result: {s}\n", .{result.encryption_used});
-        for (result.decryption_times.items, 0..) |time, i| {
-            std.debug.print("{d}: {any}\n", .{ i, time });
-        }
-    }
 }
