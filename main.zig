@@ -48,7 +48,7 @@ fn testNormal(
     key: []const cripto.Block,
     comptime module: type,
     comptime name: []const u8,
-) !void {
+) !struct { i96, i96 } {
     const encrypted = try std.heap.page_allocator.alloc(cripto.Block, msg.len);
     const decrypted = try std.heap.page_allocator.alloc(cripto.Block, msg.len);
     defer std.heap.page_allocator.free(encrypted);
@@ -58,20 +58,20 @@ fn testNormal(
     module.encrypt(msg, key, encrypted);
     const e_end = Timestamp.now(io, .cpu_process);
     const e_duration = Timestamp.durationTo(e_start, e_end).toNanoseconds();
-    std.debug.print("{s} encryption: {}\n", .{ name, e_duration });
 
     const d_start = Timestamp.now(io, .cpu_process);
     module.decrypt(encrypted, key, decrypted);
     const d_end = Timestamp.now(io, .cpu_process);
     const d_duration = Timestamp.durationTo(d_start, d_end).toNanoseconds();
-    std.debug.print("{s} decryption: {}\n", .{ name, d_duration });
 
     if (!std.mem.eql(cripto.Block, decrypted, msg)) {
         std.debug.print("{s} FAIL!\n", .{name});
     }
+
+    return .{ e_duration, d_duration };
 }
 
-fn testRsa(io: std.Io, msg: []const cripto.Block) !void {
+fn testRsa(io: std.Io, msg: []const cripto.Block) !struct { i96, i96 } {
     const encrypted = try std.heap.page_allocator.alloc(cripto.RsaOutputBlock, msg.len);
     const decrypted = try std.heap.page_allocator.alloc(cripto.Block, msg.len);
     defer std.heap.page_allocator.free(encrypted);
@@ -81,17 +81,17 @@ fn testRsa(io: std.Io, msg: []const cripto.Block) !void {
     cripto.Rsa.encrypt(msg, encrypted);
     const e_end = Timestamp.now(io, .cpu_process);
     const e_duration = Timestamp.durationTo(e_start, e_end).toNanoseconds();
-    std.debug.print("rsa encryption: {}\n", .{e_duration});
 
     const d_start = Timestamp.now(io, .cpu_process);
     cripto.Rsa.decrypt(encrypted, decrypted);
     const d_end = Timestamp.now(io, .cpu_process);
     const d_duration = Timestamp.durationTo(d_start, d_end).toNanoseconds();
-    std.debug.print("rsa decryption: {}\n", .{d_duration});
 
     if (!std.mem.eql(cripto.Block, decrypted, msg)) {
         std.debug.print("rsa FAIL!\n", .{});
     }
+
+    return .{ e_duration, d_duration };
 }
 
 fn testEncryptionsTime(io: std.Io, key: []const cripto.Block, filenames: []const []const u8, options: struct {
@@ -106,28 +106,87 @@ fn testEncryptionsTime(io: std.Io, key: []const cripto.Block, filenames: []const
         var file = try Io.Dir.cwd().openFile(io, filename, .{ .mode = .read_write });
         defer file.close(io);
 
+        std.debug.print("== File size: {} ==\n", .{try file.length(io)});
+
         const msg: []cripto.Block = try getPaddedText(io, file);
         defer std.heap.page_allocator.free(msg);
 
         if (options.runAes) {
+            _ = try testNormal(io, msg, key, cripto.Aes, "aes");
+            var eacc: i96 = 0;
+            var dacc: i96 = 0;
             for (0..numberOfRuns) |_| {
-                try testNormal(io, msg, key, cripto.Aes, "aes");
+                const times = try testNormal(io, msg, key, cripto.Aes, "aes");
+                eacc += times[0];
+                dacc += times[1];
             }
+            std.debug.print("aes encryption: {}\n", .{
+                @divTrunc(eacc, numberOfRuns),
+            });
+            std.debug.print("aes decryption: {}\n", .{
+                @divTrunc(dacc, numberOfRuns),
+            });
         }
         if (options.runRsa) {
+            _ = try testRsa(io, msg);
+            var eacc: i96 = 0;
+            var dacc: i96 = 0;
             for (0..numberOfRuns) |_| {
-                try testRsa(io, msg);
+                const times = try testRsa(io, msg);
+                eacc += times[0];
+                dacc += times[1];
             }
+            std.debug.print("rsa encryption: {}\n", .{
+                @divTrunc(eacc, numberOfRuns),
+            });
+            std.debug.print("rsa decryption: {}\n", .{
+                @divTrunc(dacc, numberOfRuns),
+            });
         }
         if (options.runDgenc) {
+            _ = try testNormal(io, msg, key, cripto.DGEnc, "dgenc");
+            var eacc: i96 = 0;
+            var dacc: i96 = 0;
             for (0..numberOfRuns) |_| {
-                try testNormal(io, msg, key, cripto.DGEnc, "dgenc");
+                const times = try testNormal(io, msg, key, cripto.DGEnc, "dgenc");
+                eacc += times[0];
+                dacc += times[1];
             }
+            std.debug.print("dgenc encryption: {}\n", .{
+                @divTrunc(eacc, numberOfRuns),
+            });
+            std.debug.print("dgenc decryption: {}\n", .{
+                @divTrunc(dacc, numberOfRuns),
+            });
         }
         if (options.runVdgenc) {
+            _ = try testNormal(
+                io,
+                msg,
+                key,
+                cripto.VectorialDGEnc,
+                "vecdgenc",
+            );
+
+            var eacc: i96 = 0;
+            var dacc: i96 = 0;
             for (0..numberOfRuns) |_| {
-                try testNormal(io, msg, key, cripto.VectorialDGEnc, "vdgenc");
+                const times = try testNormal(
+                    io,
+                    msg,
+                    key,
+                    cripto.VectorialDGEnc,
+                    "vecdgenc",
+                );
+                eacc += times[0];
+                dacc += times[1];
             }
+            std.debug.print("vecdgenc encryption: {}\n", .{
+                @divTrunc(eacc, numberOfRuns),
+            });
+            std.debug.print("vecdgenc decryption: {}\n", .{
+                @divTrunc(dacc, numberOfRuns),
+            });
         }
     }
 }
