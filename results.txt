@@ -1,0 +1,36 @@
+== File size: 916 ==
+aes encryption: 895
+aes decryption: 891
+rsa encryption: 197309
+rsa decryption: 2714377
+dgenc encryption: 446
+dgenc decryption: 447
+vecdgenc encryption: 448
+vecdgenc decryption: 457
+== File size: 28391 ==
+aes encryption: 5876
+aes decryption: 5867
+rsa encryption: 5813585
+rsa decryption: 79836274
+dgenc encryption: 3550
+dgenc decryption: 3071
+vecdgenc encryption: 980
+vecdgenc decryption: 913
+== File size: 327626 ==
+aes encryption: 45712
+aes decryption: 35880
+rsa encryption: 66303299
+rsa decryption: 922226105
+dgenc encryption: 66520
+dgenc decryption: 59083
+vecdgenc encryption: 11219
+vecdgenc decryption: 10810
+== File size: 3369207 ==
+aes encryption: 450344
+aes decryption: 365389
+rsa encryption: 683737454
+rsa decryption: 9458576338
+dgenc encryption: 688440
+dgenc decryption: 613439
+vecdgenc encryption: 68695
+vecdgenc decryption: 61813
