@@ -1,6 +1,6 @@
 const std = @import("std");
+const aes = std.crypto.core.aes;
 const c = @cImport({
-    @cInclude("openssl/aes.h");
     @cInclude("openssl/evp.h");
     @cInclude("openssl/rsa.h");
     @cInclude("openssl/err.h");
@@ -21,64 +21,68 @@ const iv: []const u8 = iv: {
 };
 
 pub const Aes = struct {
-    pub fn encrypt(message: []const Block, key: []const Block, output: []Block) void {
+    pub fn encrypt(
+        message: []const Block,
+        key: []const Block,
+        output: []Block,
+    ) void {
         const msg = std.mem.sliceAsBytes(message);
-        const k = std.mem.sliceAsBytes(key)[0..32];
+        const k: [32]u8 = std.mem.sliceAsBytes(key)[0..32].*;
         const out = std.mem.sliceAsBytes(output);
-        // AES-256 requires a 32-byte key.
-        std.debug.assert(k.len == 32);
 
-        const ctx = c.EVP_CIPHER_CTX_new() orelse unreachable;
-        _ = c.EVP_CIPHER_CTX_set_padding(ctx, 0);
-        defer c.EVP_CIPHER_CTX_free(ctx);
-
-        var written: c_int = 0;
-        var final_written: c_int = 0;
-
-        _ = c.EVP_EncryptInit_ex(ctx, c.EVP_aes_256_cbc(), null, k.ptr, iv.ptr);
-        _ = c.EVP_EncryptUpdate(ctx, out.ptr, &written, msg.ptr, @intCast(msg.len));
-        _ = c.EVP_EncryptFinal_ex(ctx, out.ptr + @as(usize, @intCast(written)), &final_written);
+        var cipher = aes.Aes256.initEnc(k);
+        var i: usize = 0;
+        while (i < msg.len) : (i += 16) {
+            cipher.encrypt(
+                @ptrCast(out[i .. i + 16].ptr),
+                @ptrCast(msg[i .. i + 16].ptr),
+            );
+        }
     }
 
-    pub fn decrypt(message: []const Block, key: []const Block, output: []Block) void {
+    pub fn decrypt(
+        message: []const Block,
+        key: []const Block,
+        output: []Block,
+    ) void {
         const msg = std.mem.sliceAsBytes(message);
-        const k = std.mem.sliceAsBytes(key)[0..32];
+        const k = std.mem.sliceAsBytes(key)[0..32].*;
         const out = std.mem.sliceAsBytes(output);
 
-        const ctx = c.EVP_CIPHER_CTX_new() orelse unreachable;
-        _ = c.EVP_CIPHER_CTX_set_padding(ctx, 0);
-        defer c.EVP_CIPHER_CTX_free(ctx);
-
-        var written: c_int = 0;
-        var final_written: c_int = 0;
-
-        _ = c.EVP_DecryptInit_ex(ctx, c.EVP_aes_256_cbc(), null, k.ptr, iv.ptr);
-        _ = c.EVP_DecryptUpdate(ctx, out.ptr, &written, msg.ptr, @intCast(msg.len));
-        _ = c.EVP_DecryptFinal_ex(ctx, out.ptr + @as(usize, @intCast(written)), &final_written);
+        var cipher = aes.Aes256.initDec(k);
+        var i: usize = 0;
+        while (i < msg.len) : (i += 16) {
+            cipher.decrypt(
+                @ptrCast(out[i .. i + 16].ptr),
+                @ptrCast(msg[i .. i + 16].ptr),
+            );
+        }
     }
 };
 
 pub const Rsa = struct {
     var rsa_key: ?*c.EVP_PKEY = null;
+    var rsa_ctx: ?*c.EVP_PKEY_CTX = null;
+
+    pub fn setup() !void {
+        try generateRsaKey();
+        rsa_ctx = c.EVP_PKEY_CTX_new(rsa_key.?, null) orelse
+            return error.CtxCreation;
+    }
+
+    pub fn delete() !void {
+        c.EVP_PKEY_CTX_free(rsa_ctx);
+    }
 
     pub fn encrypt(
         msg: []const Block,
         result: []RsaOutputBlock,
-    ) void {
-        if (rsa_key == null) generateRsaKey() catch |err|
-            std.debug.panic("generating RSA key failed: {}!\n", .{err});
-
-        const ctx = c.EVP_PKEY_CTX_new(rsa_key.?, null) orelse return;
-        defer c.EVP_PKEY_CTX_free(ctx);
-
-        if (c.EVP_PKEY_encrypt_init(ctx) != 1) return;
-        if (c.EVP_PKEY_CTX_set_rsa_padding(ctx, c.RSA_PKCS1_OAEP_PADDING) != 1)
-            std.debug.panic("padding\n", .{});
-
+    ) !void {
+        if (c.EVP_PKEY_encrypt_init(rsa_ctx) != 1) return error.EncryptionInit;
         var size: usize = 0;
         for (msg, 0..) |*block, i| {
             const r1 = c.EVP_PKEY_encrypt(
-                ctx,
+                rsa_ctx,
                 null,
                 &size,
                 @ptrCast(@alignCast(block)),
@@ -93,7 +97,7 @@ pub const Rsa = struct {
             }
 
             const r2 = c.EVP_PKEY_encrypt(
-                ctx,
+                rsa_ctx,
                 @ptrCast(@alignCast(&result[i])),
                 &size,
                 @ptrCast(@alignCast(block)),
@@ -123,20 +127,12 @@ pub const Rsa = struct {
     pub fn decrypt(
         msg: []const RsaOutputBlock,
         result: []Block,
-    ) void {
-        const key = rsa_key orelse return;
-
-        const ctx = c.EVP_PKEY_CTX_new(key, null) orelse return;
-        defer c.EVP_PKEY_CTX_free(ctx);
-
-        if (c.EVP_PKEY_decrypt_init(ctx) != 1) return;
-        if (c.EVP_PKEY_CTX_set_rsa_padding(ctx, c.RSA_PKCS1_OAEP_PADDING) != 1)
-            std.debug.panic("padding\n", .{});
-
+    ) !void {
+        if (c.EVP_PKEY_decrypt_init(rsa_ctx) != 1) return;
         var size: usize = 0;
         for (msg, 0..) |*block, i| {
             const r1 = c.EVP_PKEY_decrypt(
-                ctx,
+                rsa_ctx,
                 null,
                 &size,
                 @ptrCast(@alignCast(block)),
@@ -151,7 +147,7 @@ pub const Rsa = struct {
             }
 
             const r2 = c.EVP_PKEY_decrypt(
-                ctx,
+                rsa_ctx,
                 @ptrCast(@alignCast(&result[i])),
                 &size,
                 @ptrCast(@alignCast(block)),
