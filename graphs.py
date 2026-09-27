@@ -134,6 +134,7 @@ def bar_plot(data, title, filename, log=False):
 # ==========================================================
 
 NO_RSA = [r for r in DATA if "RSA" not in r[0]]
+NO_AES = [r for r in DATA if "AES" not in r[0]]
 
 # ==========================================================
 # LINE CHARTS
@@ -161,18 +162,37 @@ bar_plot(NO_RSA, "Without RSA — Log Bars", "bar_no_rsa_log.png", log=True)
 
 line_plot(filter_data(NO_RSA, {"Encrypt"}),
           "Encryption Only — Linear",
-          "line_encrypt_linear.png")
+          "line_encrypt_no_rsa_linear.png")
 
 line_plot(filter_data(NO_RSA, {"Decrypt"}),
           "Decryption Only — Linear",
-          "line_decrypt_linear.png")
+          "line_decrypt_no_rsa_linear.png")
 
 bar_plot(filter_data(NO_RSA, {"Encrypt"}),
          "Encryption Only — Linear Bars",
-         "bar_encrypt_linear.png")
+         "bar_encrypt_no_rsa_linear.png")
 
 bar_plot(filter_data(NO_RSA, {"Decrypt"}),
          "Decryption Only — Linear Bars",
-         "bar_decrypt_linear.png")
+         "bar_decrypt_no_rsa_linear.png")
 
+# ==========================================================
+# ENCRYPT / DECRYPT ONLY (WITHOUT AES)
+# ==========================================================
+
+line_plot(filter_data(NO_AES, {"Encrypt"}),
+          "Encryption Only — Linear",
+          "line_encrypt_no_aes_log.png", log=True)
+
+line_plot(filter_data(NO_AES, {"Decrypt"}),
+          "Decryption Only — Linear",
+          "line_decrypt_no_aes_log.png", log=True)
+
+bar_plot(filter_data(NO_AES, {"Encrypt"}),
+         "Encryption Only — Linear Bars",
+         "bar_encrypt_no_aes_log.png", log=True)
+
+bar_plot(filter_data(NO_AES, {"Decrypt"}),
+         "Decryption Only — Linear Bars",
+         "bar_decrypt_no_aes_log.png", log=True)
 print(f"Saved {len(list(OUT.glob('*.png')))} plots to {OUT.resolve()}")
