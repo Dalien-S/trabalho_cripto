@@ -35,7 +35,7 @@ Cada iteração do algoritmo trabalha sobre blocos de `512b`, e cada bloco é co
         For(
           $i arrow.l 0 "to" "text.len" - 1$,
           {
-            Assign($"xored"$, $"block" xor "mask"$)
+            Assign($"xored"$, $"text[i]" xor "mask"$)
             Assign($"reduced"$, FnInline[reduceAdd][xored])
             Assign($"red_xor_mask"$, $"reduced" xor "reduced_mask"$)
             Assign($"rem"$, $"red_xor_mask" bold(mod) 4$)
@@ -66,14 +66,15 @@ Cada iteração do algoritmo trabalha sobre blocos de `512b`, e cada bloco é co
         For(
           $i arrow.l 0 "to" "text.len" - 1$,
           {
-            Assign($"xored"$, $"block" xor "mask"$)
-            Assign($"reduced"$, FnInline[reduceAdd][xored])
+            Assign($"reduced"$, FnInline[reduceAdd][text[i]])
             Assign($"red_xor_mask"$, $"reduced" xor "reduced_mask"$)
             Assign($"rem"$, $"red_xor_mask" bold(mod) 4$)
-            Assign($"result[i][0]"$, $"xored[rem" bold(mod) 4]$)
-            Assign($"result[i][1]"$, $"xored[(rem + 1)" bold(mod) 4]$)
-            Assign($"result[i][2]"$, $"xored[(rem + 2)" bold(mod) 4]$)
-            Assign($"result[i][3]"$, $"xored[(rem + 3)" bold(mod) 4]$)
+            Assign($"res[0]"$, $"xored[rem" bold(mod) 4]$)
+            Assign($"res[1]"$, $"xored[(rem + 1)" bold(mod) 4]$)
+            Assign($"res[2]"$, $"xored[(rem + 2)" bold(mod) 4]$)
+            Assign($"res[3]"$, $"xored[(rem + 3)" bold(mod) 4]$)
+            Assign($"xored"$, $"res" xor "mask"$)
+            Assign($"result[i]"$, $"xored"$)
           },
         )
       },
